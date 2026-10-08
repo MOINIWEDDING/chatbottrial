@@ -1,14 +1,20 @@
 // Integración con la plataforma de Meta: WhatsApp Cloud API, Messenger e Instagram.
 const crypto = require('node:crypto');
 
-/** Verifica la firma X-Hub-Signature-256 que Meta envía en cada webhook. */
-function verifySignature(rawBody, signatureHeader, appSecret) {
-  if (!appSecret) return true; // sin secreto configurado (desarrollo) no se valida
+/**
+ * Verifica la firma X-Hub-Signature-256 que Meta envía en cada webhook. Acepta uno o
+ * varios secretos: con "inicio de sesión de Instagram" los webhooks de Instagram se
+ * firman con la clave secreta de la app de Instagram, distinta de la de Meta.
+ */
+function verifySignature(rawBody, signatureHeader, secrets) {
+  const list = [secrets].flat().filter(Boolean);
+  if (!list.length) return true; // sin secreto configurado (desarrollo) no se valida
   if (!rawBody || !signatureHeader?.startsWith('sha256=')) return false;
-  const expected = crypto.createHmac('sha256', appSecret).update(rawBody).digest('hex');
-  const received = signatureHeader.slice('sha256='.length);
-  if (received.length !== expected.length) return false;
-  return crypto.timingSafeEqual(Buffer.from(received, 'hex'), Buffer.from(expected, 'hex'));
+  const received = Buffer.from(signatureHeader.slice('sha256='.length), 'hex');
+  return list.some((secret) => {
+    const expected = crypto.createHmac('sha256', secret).update(rawBody).digest();
+    return received.length === expected.length && crypto.timingSafeEqual(received, expected);
+  });
 }
 
 /**
@@ -63,36 +69,71 @@ function parseWebhook(body) {
   if (body.object === 'page' || body.object === 'instagram') {
     const channel = body.object === 'page' ? 'messenger' : 'instagram';
     for (const entry of body.entry) {
-      for (const ev of entry.messaging ?? []) {
-        const m = ev.message;
-        if (!m || m.is_echo || !ev.sender?.id) continue;
-        const msg = {
-          channel,
-          contactId: ev.sender.id,
-          contactName: null,
-          externalId: m.mid,
-          text: m.text ?? '',
-          attachments: [],
-          location: null,
-          replyTo: {},
-        };
-        for (const a of m.attachments ?? []) {
-          if (a.type === 'location' && a.payload?.coordinates) {
-            msg.location = { latitude: a.payload.coordinates.lat, longitude: a.payload.coordinates.long, address: a.title ?? null };
-          } else {
-            msg.attachments.push({ type: a.type, url: a.payload?.url });
-          }
-        }
-        out.push(msg);
+      // Instagram entrega los eventos en entry.messaging; el botón "Probar" del panel
+      // de Meta (y algunas suscripciones) los envía como entry.changes[field=messages].
+      const events = [
+        ...(entry.messaging ?? []),
+        ...(entry.changes ?? []).filter((c) => c.field === 'messages' && c.value).map((c) => c.value),
+      ];
+      for (const ev of events) {
+        const msg = parseMessagingEvent(ev, channel, entry.id);
+        if (msg) out.push(msg);
       }
     }
   }
   return out;
 }
 
+const ATTACHMENT_LABELS = {
+  story_mention: 'Mención en historia', share: 'Publicación compartida', ig_reel: 'Reel', reel: 'Reel',
+};
+
+/** Convierte un evento de Messenger / Instagram en un mensaje normalizado (o null si se ignora). */
+function parseMessagingEvent(ev, channel, accountId) {
+  const senderId = ev.sender?.id;
+  // Se ignoran los mensajes que envía la propia cuenta municipal (ecos).
+  if (!senderId || (accountId && String(senderId) === String(accountId))) return null;
+  const base = { channel, contactId: String(senderId), contactName: null, attachments: [], location: null, replyTo: {} };
+
+  // Botones de inicio ("rompehielos") y menús: se tratan como texto.
+  if (ev.postback) {
+    return { ...base, externalId: ev.postback.mid ?? null, postback: true, text: ev.postback.payload || ev.postback.title || '' };
+  }
+
+  const m = ev.message;
+  if (!m || m.is_echo || m.is_deleted) return null;
+  const msg = { ...base, externalId: m.mid, text: m.quick_reply?.payload && !m.text ? m.quick_reply.payload : (m.text ?? '') };
+  for (const a of m.attachments ?? []) {
+    if (a.type === 'location' && a.payload?.coordinates) {
+      msg.location = { latitude: a.payload.coordinates.lat, longitude: a.payload.coordinates.long, address: a.title ?? null };
+    } else {
+      msg.attachments.push({ type: ATTACHMENT_LABELS[a.type] ?? a.type, url: a.payload?.url });
+    }
+  }
+  if (m.reply_to?.story?.url) msg.attachments.push({ type: 'Respuesta a historia', url: m.reply_to.story.url });
+  if (m.is_unsupported && !msg.text && !msg.attachments.length) msg.attachments.push({ type: 'contenido no soportado' });
+  if (!msg.text && !msg.attachments.length && !msg.location) return null;
+  return msg;
+}
+
+/**
+ * Instagram admite dos formas de conexión:
+ *  - "instagram": API de Instagram con inicio de sesión de Instagram (token IGAA…, graph.instagram.com).
+ *  - "facebook":  API de Instagram vía página de Facebook (token de página, graph.facebook.com).
+ */
+function instagramApi(metaConfig) {
+  if (metaConfig.instagramApi === 'instagram' || metaConfig.instagramApi === 'facebook') return metaConfig.instagramApi;
+  return /^IG/.test(metaConfig.instagramAccessToken ?? '') ? 'instagram' : 'facebook';
+}
+
+function graphBase(metaConfig, channel) {
+  const host = channel === 'instagram' && instagramApi(metaConfig) === 'instagram' ? 'graph.instagram.com' : 'graph.facebook.com';
+  return `https://${host}/${metaConfig.graphVersion}`;
+}
+
 /** Crea el cliente que envía respuestas por cada canal. */
 function createSender(metaConfig, { fetchImpl = globalThis.fetch, logger = console } = {}) {
-  const base = `https://graph.facebook.com/${metaConfig.graphVersion}`;
+  const waBase = `https://graph.facebook.com/${metaConfig.graphVersion}`;
 
   async function post(url, token, payload) {
     const res = await fetchImpl(url, {
@@ -115,7 +156,7 @@ function createSender(metaConfig, { fetchImpl = globalThis.fetch, logger = conso
         logger.info(`[sin credenciales] WhatsApp → ${contactId}: ${text}`);
         return { dryRun: true };
       }
-      return post(`${base}/${replyTo.phoneNumberId}/messages`, metaConfig.whatsappToken, {
+      return post(`${waBase}/${replyTo.phoneNumberId}/messages`, metaConfig.whatsappToken, {
         messaging_product: 'whatsapp', to: contactId, type: 'text', text: { body: text },
       });
     }
@@ -124,10 +165,39 @@ function createSender(metaConfig, { fetchImpl = globalThis.fetch, logger = conso
       logger.info(`[sin credenciales] ${channel} → ${contactId}: ${text}`);
       return { dryRun: true };
     }
-    return post(`${base}/me/messages`, token, {
-      recipient: { id: contactId }, messaging_type: 'RESPONSE', message: { text },
+    // Messenger e Instagram limitan el largo de cada mensaje (1000 caracteres en Instagram).
+    return post(`${graphBase(metaConfig, channel)}/me/messages`, token, {
+      recipient: { id: contactId }, messaging_type: 'RESPONSE', message: { text: text.slice(0, 1000) },
     });
   };
 }
 
-module.exports = { verifySignature, parseWebhook, createSender };
+/**
+ * Obtiene el nombre / @usuario de quien escribe por Messenger o Instagram, para
+ * mostrarlo en el panel. Si falla (permisos, usuario sin perfil) devuelve null.
+ */
+function createProfileFetcher(metaConfig, { fetchImpl = globalThis.fetch } = {}) {
+  return async function fetchProfile({ channel, contactId }) {
+    const token = channel === 'instagram' ? metaConfig.instagramAccessToken
+      : channel === 'messenger' ? metaConfig.pageAccessToken : null;
+    if (!token) return null;
+    const fields = channel === 'instagram' ? 'name,username' : 'first_name,last_name';
+    try {
+      const res = await fetchImpl(`${graphBase(metaConfig, channel)}/${encodeURIComponent(contactId)}?fields=${fields}`, {
+        headers: { Authorization: `Bearer ${token}` },
+        signal: AbortSignal.timeout(3000),
+      });
+      if (!res.ok) return null;
+      const p = await res.json();
+      if (channel === 'instagram') {
+        if (p.name && p.username) return `${p.name} (@${p.username})`;
+        return p.username ? `@${p.username}` : (p.name || null);
+      }
+      return [p.first_name, p.last_name].filter(Boolean).join(' ') || null;
+    } catch {
+      return null;
+    }
+  };
+}
+
+module.exports = { verifySignature, parseWebhook, createSender, createProfileFetcher, instagramApi, graphBase };

@@ -46,7 +46,7 @@ function describe(msg) {
   return '';
 }
 
-function createBot({ db, send, windowMinutes = 30, logger = console }) {
+function createBot({ db, send, fetchProfile = async () => null, windowMinutes = 30, logger = console }) {
   const getConversation = (channel, contactId) => db.prepare(`
     SELECT *, (julianday('now') - julianday(updated_at)) * 1440 AS age_minutes
     FROM conversations WHERE channel = ? AND contact_id = ?`).get(channel, contactId);
@@ -111,7 +111,8 @@ function createBot({ db, send, windowMinutes = 30, logger = console }) {
 
     // Sin denuncia en curso: saludo → menú; cualquier otra cosa → nueva denuncia.
     if (!ticket) {
-      if (!text || (msg.text && isGreeting(msg.text) && !msg.attachments?.length && !msg.location)) {
+      const greeting = msg.postback || (msg.text && isGreeting(msg.text) && !msg.attachments?.length && !msg.location);
+      if (!text || greeting) {
         record(null);
         setConversation(channel, contactId, 'awaiting_report');
         replies.push(await reply(target, MESSAGES.welcome()));
@@ -129,6 +130,12 @@ function createBot({ db, send, windowMinutes = 30, logger = console }) {
       const askLocation = sector === UNKNOWN_SECTOR && !msg.location;
       setConversation(channel, contactId, askLocation ? 'awaiting_location' : 'open', ticket.id);
       replies.push(await reply(target, MESSAGES.created(ticket, askLocation), { ticketId: ticket.id }));
+      // Instagram y Messenger no incluyen el nombre en el webhook: se consulta el perfil
+      // después de responder, para no demorar la respuesta al vecino.
+      if (!ticket.contact_name) {
+        const contactName = await fetchProfile({ channel, contactId }).catch(() => null);
+        if (contactName) ticket = repo.updateTicket(db, ticket.id, { contact_name: contactName });
+      }
       return { replies, ticket };
     }
 

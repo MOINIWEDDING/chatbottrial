@@ -11,7 +11,8 @@
     "dev": "node --watch --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server.js",
     "demo": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning scripts/demo.js",
     "crear-usuario": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning scripts/crear-usuario.js",
-    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\""
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\"",
+    "instagram": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning scripts/instagram.js"
   },
   "repository": {
     "type": "git",

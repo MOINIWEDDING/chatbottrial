@@ -7,9 +7,9 @@ const auth = require('./auth');
 const { verifySignature, parseWebhook } = require('./meta');
 const { createBot } = require('./bot');
 
-function createApp({ db, send, config, logger = console }) {
+function createApp({ db, send, fetchProfile, config, logger = console }) {
   const app = express();
-  const bot = createBot({ db, send, windowMinutes: config.conversationWindowMinutes, logger });
+  const bot = createBot({ db, send, fetchProfile, windowMinutes: config.conversationWindowMinutes, logger });
   const secure = config.publicUrl.startsWith('https://');
 
   app.disable('x-powered-by');
@@ -29,7 +29,7 @@ function createApp({ db, send, config, logger = console }) {
   });
 
   app.post('/webhook', async (req, res) => {
-    if (!verifySignature(req.rawBody, req.get('x-hub-signature-256'), config.meta.appSecret)) {
+    if (!verifySignature(req.rawBody, req.get('x-hub-signature-256'), [config.meta.appSecret, config.meta.instagramAppSecret])) {
       logger.warn('Webhook rechazado: firma inválida');
       return res.sendStatus(401);
     }

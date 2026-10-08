@@ -17,5 +17,8 @@ module.exports = {
     whatsappToken: env.WHATSAPP_TOKEN || '',
     pageAccessToken: env.FB_PAGE_ACCESS_TOKEN || '',
     instagramAccessToken: env.INSTAGRAM_ACCESS_TOKEN || env.FB_PAGE_ACCESS_TOKEN || '',
+    // 'instagram' (inicio de sesión de Instagram) o 'facebook' (vía página). Vacío = automático según el token.
+    instagramApi: env.INSTAGRAM_API || '',
+    instagramAppSecret: env.INSTAGRAM_APP_SECRET || '',
   },
 };

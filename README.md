@@ -60,9 +60,46 @@ Los tres canales pasan por **Meta for Developers**, con una sola app y un solo w
 3. En <https://developers.facebook.com>, cree una app de tipo **Negocios** vinculada al Business Manager de la Municipalidad. Copie la **clave secreta de la app** (Configuración → Básica) en `META_APP_SECRET`.
 4. **WhatsApp**: agregue el producto *WhatsApp*, registre el número municipal y cree un token permanente (usuario del sistema del Business Manager con el permiso `whatsapp_business_messaging`). Póngalo en `WHATSAPP_TOKEN`. En *Configuración → Webhook*, ingrese `https://SU-DOMINIO/webhook` y el `META_VERIFY_TOKEN`, y suscríbase al campo **messages**.
 5. **Facebook Messenger**: agregue el producto *Messenger*, conecte la página de Facebook de la Municipalidad y genere el **token de la página**. Póngalo en `FB_PAGE_ACCESS_TOKEN`. Configure el mismo webhook y suscriba la página a **messages**.
-6. **Instagram**: la cuenta de Instagram debe ser **profesional** y estar vinculada a la página de Facebook. Agregue *Instagram* (mensajería) y suscríbase a **messages** con el mismo webhook. Por defecto se usa el token de la página; si Meta le entrega uno distinto, use `INSTAGRAM_ACCESS_TOKEN`. En la app de Instagram, active *Configuración → Mensajes → Permitir acceso a los mensajes*.
+6. **Instagram**: vea la sección [Conectar Instagram](#conectar-instagram-paso-a-paso) más abajo.
 7. Solicite los permisos en **Revisión de la app** (`whatsapp_business_messaging`, `pages_messaging`, `instagram_manage_messages`) y pase la app a modo **Activo**. Mientras tanto, sólo los administradores y evaluadores de la app pueden escribirle al bot.
 8. En producción: `NODE_ENV=production` (el servidor no arranca sin `META_APP_SECRET`) y `ENABLE_SIMULATOR=false`.
+
+## Conectar Instagram paso a paso
+
+Cuando alguien envía un MD a la cuenta de Instagram de la Municipalidad, el bot le responde automáticamente en el mismo chat de Instagram. La denuncia aparece en el panel con canal **Instagram**, con el nombre y @usuario de quien escribió, y llega al equipo que corresponde.
+
+**Requisitos de la cuenta**
+- La cuenta de Instagram debe ser **profesional** (Empresa o Creador): *Configuración → Tipo de cuenta y herramientas*.
+- En la app de Instagram, active *Configuración → Mensajes y respuestas a historias → Herramientas conectadas → Permitir acceso a los mensajes*.
+
+Hay dos formas de conectarla. Use **una** de las dos.
+
+### Opción A (recomendada): API de Instagram con inicio de sesión de Instagram
+No necesita una página de Facebook.
+
+1. En su app de Meta for Developers, agregue el producto **Instagram** y elija *API con inicio de sesión de Instagram*.
+2. En *Generar tokens de acceso*, agregue la cuenta de Instagram de la Municipalidad y genere el token (empieza con `IGAA…`). Póngalo en `INSTAGRAM_ACCESS_TOKEN`.
+3. Copie la **clave secreta de la app de Instagram**, que aparece en la misma pantalla y es distinta de la clave de Meta, en `INSTAGRAM_APP_SECRET`.
+4. En *Configurar webhooks*: URL `https://SU-DOMINIO/webhook`, el mismo `META_VERIFY_TOKEN`, y suscríbase a **messages** y **messaging_postbacks**.
+
+### Opción B: a través de la página de Facebook
+1. Vincule la cuenta de Instagram a la página de Facebook de la Municipalidad (desde *Meta Business Suite → Configuración → Cuentas de Instagram*).
+2. Use el mismo `FB_PAGE_ACCESS_TOKEN` de Messenger y deje `INSTAGRAM_ACCESS_TOKEN` vacío. El token necesita los permisos `instagram_basic`, `instagram_manage_messages` y `pages_manage_metadata`.
+3. En el producto *Webhooks*, elija el objeto **Instagram** y suscríbase a **messages** y **messaging_postbacks**.
+
+### Terminar la conexión (ambas opciones)
+```bash
+npm run instagram -- verificar     # confirma el token y muestra la cuenta (@usuario)
+npm run instagram -- suscribir     # suscribe la cuenta para recibir los MD en el webhook
+npm run instagram -- rompehielos   # agrega los botones "Quiero hacer una denuncia" y "¿Cómo va mi denuncia?"
+```
+Al iniciar, el servidor muestra en la consola si Instagram quedó configurado.
+
+**Prueba:** desde otra cuenta de Instagram (que sea administradora o evaluadora de la app mientras no esté aprobada), envíe un MD como *"Hay basura sin recoger en la plaza Yungay"*. Debe recibir el folio en segundos, y la denuncia debe aparecer en el panel con el canal Instagram.
+
+**Antes de abrirlo al público:** solicite en *Revisión de la app* el permiso `instagram_business_manage_messages` (opción A) o `instagram_manage_messages` (opción B), y pase la app a modo **Activo**.
+
+**Lo que también se registra:** fotos y videos, menciones de la cuenta en historias y respuestas a historias. Todo queda en la denuncia con su enlace.
 
 > **Ventana de 24 horas de Meta:** el vecino recibe respuesta inmediata porque él escribió primero. Un aviso de cambio de estado enviado **más de 24 horas** después del último mensaje del vecino puede ser rechazado por Meta; en WhatsApp requeriría una *plantilla* aprobada. En ese caso el panel muestra "⚠ No entregado" en el mensaje y el equipo puede contactar al vecino por otra vía.
 
@@ -85,7 +122,7 @@ src/
   tickets.js     acceso a datos
   db.js, auth.js
 public/          panel web (HTML/CSS/JS sin dependencias)
-scripts/         demo y creación de usuarios
+scripts/         demo, creación de usuarios y configuración de Instagram
 test/            pruebas (npm test)
 ```
 

@@ -74,7 +74,7 @@ test('rechaza webhooks con firma inválida', async (t) => {
   t.after(() => server.close());
   const res = await postWebhook(base, waText('w1', '569', 'bache en Lira'), 'falso');
   assert.equal(res.status, 401);
-  assert.equal((await db.get('SELECT COUNT(*) n FROM tickets')).n, 0);
+  assert.equal((await db.get('SELECT COUNT(*)::int n FROM tickets')).n, 0);
 });
 
 test('flujo completo: WhatsApp → denuncia → panel del equipo correcto', async (t) => {
@@ -96,7 +96,7 @@ test('flujo completo: WhatsApp → denuncia → panel del equipo correcto', asyn
   await waitFor(() => sent.length === 2);
   assert.match(sent[1].text, /San Borja/);
   const ticket = (await db.get('SELECT * FROM tickets'));
-  assert.equal((await db.get('SELECT COUNT(*) n FROM tickets')).n, 1);
+  assert.equal((await db.get('SELECT COUNT(*)::int n FROM tickets')).n, 1);
   assert.equal(ticket.department, 'obras');
   assert.equal(ticket.sector, 'san-borja');
   assert.equal(ticket.address, 'Calle Lira 450');

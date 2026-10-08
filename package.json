@@ -21,11 +21,15 @@
   },
   "homepage": "https://github.com/MOINIWEDDING/chatbottrial#readme",
   "dependencies": {
-    "@libsql/client": "^0.18.0",
-    "express": "^5.2.1"
+    "@electric-sql/pglite": "^0.5.8",
+    "express": "^5.2.1",
+    "pg": "^8.23.1"
   },
   "engines": {
     "node": "22.x"
   },
-  "private": true
+  "private": true,
+  "devDependencies": {
+    "@electric-sql/pglite-socket": "^0.2.11"
+  }
 }

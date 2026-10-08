@@ -5,12 +5,13 @@ const env = process.env;
 module.exports = {
   port: Number(env.PORT || 3000),
   database: {
-    // Turso (producción / Vercel) o un archivo local en desarrollo.
-    // Se aceptan los nombres que usan Turso y sus integraciones; DATABASE_URL sólo si es libSQL.
-    url: env.TURSO_DATABASE_URL || env.TURSO_URL || env.LIBSQL_URL
-      || (/^(libsql|wss?|https?):\/\//.test(env.DATABASE_URL ?? '') ? env.DATABASE_URL : '')
-      || (env.DB_PATH ? `file:${env.DB_PATH}` : `file:${path.join(__dirname, '..', 'data', 'denuncias.db')}`),
-    authToken: env.TURSO_AUTH_TOKEN || env.TURSO_TOKEN || env.LIBSQL_AUTH_TOKEN || env.DATABASE_AUTH_TOKEN || '',
+    // Supabase (producción / Vercel): cadena de conexión de Postgres. La integración de
+    // Supabase en Vercel la entrega como POSTGRES_URL. Sin ella se usa una base local
+    // (PGlite) en la carpeta data/, sólo para desarrollo.
+    url: env.DATABASE_URL || env.POSTGRES_URL || env.SUPABASE_DB_URL
+      || env.DB_PATH || path.join(__dirname, '..', 'data', 'pglite'),
+    // Certificado de Supabase (Database Settings → SSL Configuration) para verificar la conexión.
+    caCert: env.DATABASE_CA_CERT || '',
   },
   adminPassword: env.ADMIN_PASSWORD || '',
   isVercel: !!env.VERCEL,

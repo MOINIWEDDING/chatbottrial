@@ -6,8 +6,11 @@ const repo = require('./tickets');
 const auth = require('./auth');
 const { verifySignature, parseWebhook } = require('./meta');
 const { createBot } = require('./bot');
+const { isUniqueViolation } = require('./db');
 
 const MAX_WEBHOOK_BYTES = 2 * 1024 * 1024;
+
+const fmtDate = (d) => (d ? new Date(d).toLocaleString('es-CL', { timeZone: 'America/Santiago', dateStyle: 'short', timeStyle: 'short' }) : '');
 
 /**
  * Lee el cuerpo crudo de la solicitud (necesario para verificar la firma de Meta).
@@ -217,7 +220,7 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
     };
     const header = ['Folio', 'Fecha', 'Canal', 'Vecino', 'Departamento', 'Sector', 'Dirección', 'Descripción', 'Estado'];
     const lines = items.map((t) => [
-      t.folio, t.created_at, t.channel, t.contact_name, catalog.findDepartment(t.department)?.name,
+      t.folio, fmtDate(t.created_at), t.channel, t.contact_name, catalog.findDepartment(t.department)?.name,
       catalog.sectorName(t.sector), t.address, t.description, t.status,
     ].map(cell).join(','));
     res.type('text/csv; charset=utf-8').attachment('denuncias.csv').send(`﻿${[header.join(','), ...lines].join('\r\n')}`);
@@ -237,7 +240,8 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
     try {
       res.status(201).json(await auth.createUser(db, { username, name, password, role, department }));
     } catch (err) {
-      res.status(409).json({ error: /UNIQUE/.test(err.message) ? 'El usuario ya existe' : err.message });
+      if (!isUniqueViolation(err)) throw err;
+      res.status(409).json({ error: 'El usuario ya existe' });
     }
   });
 

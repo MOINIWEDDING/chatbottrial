@@ -1,7 +1,7 @@
 // Carga datos de demostración: un usuario por departamento y denuncias de ejemplo.
 // Uso: npm run demo
 const config = require('../src/config');
-const { openDatabase } = require('../src/db');
+const { openDatabase, isPostgresUrl } = require('../src/db');
 const { createUser } = require('../src/auth');
 const { createBot } = require('../src/bot');
 const { DEPARTMENTS } = require('../src/catalog');
@@ -23,8 +23,8 @@ const SAMPLES = [
 ];
 
 (async () => {
-  if (!config.database.url.startsWith('file:') && !process.argv.includes('--forzar')) {
-    console.error('La base configurada es remota (Turso). Los datos de demostración crean usuarios con la contraseña');
+  if (isPostgresUrl(config.database.url) && !process.argv.includes('--forzar')) {
+    console.error('La base configurada es remota (Supabase). Los datos de demostración crean usuarios con la contraseña');
     console.error(`"${PASSWORD}" y denuncias falsas. Si de verdad quiere cargarlos ahí: npm run demo -- --forzar`);
     process.exit(1);
   }

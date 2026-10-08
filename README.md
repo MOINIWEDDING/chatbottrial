@@ -32,7 +32,7 @@ Vecino (WhatsApp / Instagram / Facebook)
 
 ## Instalar y probar (5 minutos)
 
-Requiere **Node.js 22**. Para probar en su computador no necesita una base de datos externa: los datos quedan en el archivo `data/denuncias.db`. En Vercel se usa una base Turso (vea [Publicar en Vercel](#publicar-en-vercel)).
+Requiere **Node.js 22**. Para probar en su computador no necesita instalar una base de datos: si no hay `DATABASE_URL`, se usa un PostgreSQL local incluido (PGlite), que guarda los datos en la carpeta `data/`. En Vercel se usa Supabase (vea [Publicar en Vercel](#publicar-en-vercel)).
 
 ```bash
 npm install
@@ -55,28 +55,40 @@ npm run crear-usuario -- mgonzalez OtraClave456 admin "María González"
 
 El repositorio ya viene preparado para Vercel (`vercel.json` y `api/index.js`): el panel se sirve como sitio estático y la API y el webhook corren como una función.
 
-**¿Por qué hace falta Turso?** En Vercel el disco es temporal: un archivo de base de datos se borraría en cada despliegue o reinicio, y con él las denuncias. Por eso en Vercel los datos se guardan en **Turso**, una base de datos SQLite en la nube que tiene un plan gratuito y se conecta desde el mismo panel de Vercel. Si falta, el sistema no arranca y muestra el mensaje *"Falta TURSO_DATABASE_URL"*, en vez de perder datos sin avisar.
+**¿Por qué hace falta Supabase?** En Vercel el disco es temporal: una base guardada en archivos se borraría en cada despliegue o reinicio, y con ella las denuncias. Por eso en Vercel los datos se guardan en **Supabase**, una base PostgreSQL en la nube con plan gratuito. Si falta, el sistema no arranca y muestra el mensaje *"Falta DATABASE_URL"*, en vez de perder datos sin avisar.
 
-1. **Importe el proyecto.** En <https://vercel.com/new>, elija *Import Git Repository* y seleccione `moiniwedding/chatbottrial`. No cambie nada de la configuración de compilación (el *Framework Preset* queda en *Other*).
+1. **Cree el proyecto en Supabase.** En <https://supabase.com/dashboard>, elija *New project*. Use la región **South America (São Paulo)**, la más cercana a Chile, y guarde la contraseña de la base que le pide.
+   - No hay que crear tablas a mano: el sistema las crea solo la primera vez que arranca. Además, les activa *Row Level Security*, para que no se puedan leer desde la API pública de Supabase.
+2. **Copie la cadena de conexión.** En el proyecto de Supabase, presione **Connect** y elija **Transaction pooler** (puerto `6543`). Copie la URI y reemplace `[YOUR-PASSWORD]` por la contraseña de la base. Queda así:
+   `postgresql://postgres.abcdefgh:SU-CONTRASEÑA@aws-0-sa-east-1.pooler.supabase.com:6543/postgres`
+   - Use el *Transaction pooler*, no la *Direct connection*: Vercel crea muchas conexiones cortas, y la conexión directa usa IPv6, que Vercel no soporta.
+   - Si la contraseña tiene símbolos como `@`, `#` o `/`, cámbiela por una sin símbolos, o escríbalos codificados (`@` → `%40`).
+3. **Importe el proyecto en Vercel.** En <https://vercel.com/new>, elija *Import Git Repository* y seleccione `moiniwedding/chatbottrial`. No cambie la configuración de compilación (el *Framework Preset* queda en *Other*). Las funciones ya están configuradas para correr en São Paulo (`gru1`), junto a la base.
    - Vercel publica en producción la rama principal (`main`). Si el código todavía está en otra rama, únala a `main` (merge del pull request) o cambie la rama de producción en *Settings → Environments → Production*.
-2. **Cree la base de datos.** En el proyecto: *Storage → Create Database → Turso → Continue*. Elija la región **AWS us-east-1** (la misma de las funciones de Vercel por defecto) y conéctela al proyecto. Luego revise en *Settings → Environment Variables* que hayan quedado la URL y el token de la base. El sistema reconoce `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` (y también `TURSO_URL`, `LIBSQL_URL` o `DATABASE_URL` con una dirección `libsql://`). Si la integración usó otros nombres, o les agregó un prefijo, cree a mano `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN` con esos mismos valores.
-   - Si prefiere crearla directamente en <https://turso.tech>: `turso db create denuncias`, `turso db show denuncias --url` y `turso db tokens create denuncias`. Luego agregue esos dos valores como variables en Vercel.
-3. **Agregue las variables de entorno** en *Settings → Environment Variables* (ambiente *Production*):
+4. **Agregue las variables de entorno** en *Settings → Environment Variables* (ambiente *Production*):
 
    | Variable | Valor |
    |---|---|
+   | `DATABASE_URL` | La cadena de conexión del paso 2 |
    | `ADMIN_PASSWORD` | Contraseña del usuario `admin` (se crea la primera vez que alguien entra) |
    | `META_VERIFY_TOKEN` | Un texto que usted invente, el mismo que pondrá en Meta |
    | `META_APP_SECRET` | Clave secreta de la app de Meta (obligatoria en producción) |
    | `WHATSAPP_TOKEN`, `FB_PAGE_ACCESS_TOKEN` | Tokens de WhatsApp y de la página de Facebook |
    | `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_APP_SECRET` | Para Instagram (vea más abajo) |
    | `ENABLE_SIMULATOR` | `false` cuando ya esté en uso real |
+   | `DATABASE_CA_CERT` | Opcional, recomendado: el contenido del certificado de Supabase (*Project Settings → Database → SSL Configuration → Download certificate*). Con él se verifica que la conexión sea realmente con Supabase. |
 
-4. **Despliegue** (*Deployments → Redeploy*, o haga un push a `main`). Abra `https://SU-PROYECTO.vercel.app` y entre como `admin` con la contraseña de `ADMIN_PASSWORD`.
-5. **Configure Meta** con la URL del webhook `https://SU-PROYECTO.vercel.app/webhook`. Use siempre el dominio de **producción**: las URL de vista previa de Vercel están protegidas con inicio de sesión y Meta no puede llegar a ellas.
-6. **Cree los usuarios de cada equipo** en la pestaña *Usuarios*. También puede hacerlo desde su computador: ponga `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN` en su `.env` y use `npm run crear-usuario` o `npm run instagram`; esos comandos trabajan directo sobre la base de producción.
+   Si prefiere conectar Supabase desde *Vercel → Storage* (integración de Supabase), no necesita `DATABASE_URL`: el sistema usa la variable `POSTGRES_URL` que crea esa integración.
+
+5. **Despliegue** (*Deployments → Redeploy*, o haga un push a `main`). Abra `https://SU-PROYECTO.vercel.app` y entre como `admin` con la contraseña de `ADMIN_PASSWORD`.
+6. **Configure Meta** con la URL del webhook `https://SU-PROYECTO.vercel.app/webhook`. Use siempre el dominio de **producción**: las URL de vista previa de Vercel están protegidas con inicio de sesión y Meta no puede llegar a ellas.
+7. **Cree los usuarios de cada equipo** en la pestaña *Usuarios*. También puede hacerlo desde su computador: ponga `DATABASE_URL` en su `.env` y use `npm run crear-usuario`, que trabaja directo sobre la base de producción.
 
 Al cambiar una variable de entorno en Vercel, hay que volver a desplegar para que tome efecto.
+
+**Respaldo y consultas:** las denuncias quedan en las tablas `tickets` (denuncias), `messages` (conversación e historial), `users`, `sessions` y `conversations` de Supabase. Puede verlas en el *Table Editor* o consultarlas en el *SQL Editor*. Las contraseñas de los funcionarios se guardan cifradas (scrypt).
+
+**Plan de Supabase:** el plan gratuito sirve para empezar, pero pausa los proyectos que pasan una semana sin actividad y sus respaldos son limitados. Para uso real con denuncias de vecinos, conviene el plan pagado (respaldos diarios y sin pausas), o al menos exportar las denuncias a CSV desde el panel con regularidad.
 
 ## Conectar WhatsApp, Instagram y Facebook
 
@@ -150,7 +162,7 @@ src/
   catalog.js     departamentos, palabras clave, sectores, estados
   meta.js        lectura de webhooks y envío por WhatsApp / Messenger / Instagram
   tickets.js     acceso a datos
-  db.js          base de datos libSQL: archivo local o Turso
+  db.js          base de datos PostgreSQL: Supabase, o PGlite local para desarrollo
   auth.js        usuarios, contraseñas y sesiones
 public/          panel web (HTML/CSS/JS sin dependencias)
 scripts/         demo, creación de usuarios y configuración de Instagram

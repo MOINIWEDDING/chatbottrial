@@ -1,12 +1,14 @@
 // Servidor local / servidor propio: npm start
 const { createRuntime } = require('./runtime');
 const { instagramApi } = require('./meta');
+const { isPostgresUrl } = require('./db');
 
 createRuntime().then(({ app, config }) => {
   app.listen(config.port, () => {
     console.log(`Panel de denuncias en http://localhost:${config.port}`);
     console.log(`Webhook de Meta en ${config.publicUrl || `http://localhost:${config.port}`}/webhook`);
-    console.log(`Base de datos: ${config.database.url.startsWith('file:') ? config.database.url : 'Turso (remota)'}`);
+    const dbUrl = config.database.url;
+    console.log(`Base de datos: ${isPostgresUrl(dbUrl) ? `Postgres en ${new URL(dbUrl).hostname}` : `local (PGlite) en ${dbUrl}`}`);
     if (!config.meta.appSecret && !config.meta.instagramAppSecret) {
       console.warn('ADVERTENCIA: META_APP_SECRET no configurado; no se verifican las firmas del webhook.');
     }

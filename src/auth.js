@@ -1,4 +1,5 @@
 const crypto = require('node:crypto');
+const { isUniqueViolation } = require('./db');
 
 const COOKIE = 'sid';
 
@@ -18,11 +19,11 @@ function verifyPassword(password, stored) {
 
 async function createUser(db, { username, name, password, role = 'agent', department = null }) {
   if (role === 'agent' && !department) throw new Error('Los usuarios de equipo deben tener un departamento');
-  const { lastInsertRowid } = await db.run(
-    'INSERT INTO users (username, name, password_hash, role, department) VALUES (?, ?, ?, ?, ?)',
+  const { rows: [row] } = await db.run(
+    'INSERT INTO users (username, name, password_hash, role, department) VALUES (?, ?, ?, ?, ?) RETURNING *',
     username.trim().toLowerCase(), name, hashPassword(password), role, role === 'admin' ? null : department,
   );
-  return publicUser(await db.get('SELECT * FROM users WHERE id = ?', lastInsertRowid));
+  return publicUser(row);
 }
 
 /** Elimina un usuario y sus sesiones (sin depender de las claves foráneas de la base). */
@@ -44,8 +45,8 @@ function parseCookies(header = '') {
 async function createSession(db, userId, days) {
   const token = crypto.randomBytes(32).toString('hex');
   await db.batch([
-    ["INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, datetime('now', ?))", token, userId, `+${days} days`],
-    ["DELETE FROM sessions WHERE expires_at < datetime('now')"],
+    ['INSERT INTO sessions (token, user_id, expires_at) VALUES (?, ?, now() + make_interval(days => ?::int))', token, userId, days],
+    ['DELETE FROM sessions WHERE expires_at < now()'],
   ]);
   return token;
 }
@@ -54,7 +55,7 @@ async function sessionUser(db, token) {
   if (!token) return null;
   return publicUser(await db.get(`
     SELECT u.* FROM sessions s JOIN users u ON u.id = s.user_id
-    WHERE s.token = ? AND s.expires_at > datetime('now')`, token));
+    WHERE s.token = ? AND s.expires_at > now()`, token));
 }
 
 /**
@@ -62,12 +63,12 @@ async function sessionUser(db, token) {
  * una contraseña aleatoria que se muestra en el registro del servidor).
  */
 async function ensureAdmin(db, adminPassword, logger = console) {
-  if ((await db.get('SELECT COUNT(*) AS n FROM users')).n) return;
+  if ((await db.get('SELECT COUNT(*)::int AS n FROM users')).n) return;
   const password = adminPassword || crypto.randomBytes(9).toString('base64url');
   try {
     await createUser(db, { username: 'admin', name: 'Administrador', password, role: 'admin' });
   } catch (err) {
-    if (/UNIQUE/.test(err.message)) return; // otra instancia lo creó al mismo tiempo
+    if (isUniqueViolation(err)) return; // otra instancia lo creó al mismo tiempo
     throw err;
   }
   logger.log(`Usuario administrador creado → usuario: admin  contraseña: ${adminPassword ? '(la de ADMIN_PASSWORD)' : password}`);

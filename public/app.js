@@ -42,7 +42,7 @@ const deptName = (id) => name('departments', id);
 const sectorName = (id) => name('sectors', id);
 const statusName = (id) => name('statuses', id);
 const channelName = (id) => name('channels', id);
-const fmtDate = (s) => new Date(`${s.replace(' ', 'T')}Z`).toLocaleString('es-CL', { dateStyle: 'short', timeStyle: 'short' });
+const fmtDate = (s) => new Date(s).toLocaleString('es-CL', { timeZone: 'America/Santiago', dateStyle: 'short', timeStyle: 'short' });
 const statusBadge = (s) => h('span', { class: `status status-${s}` }, statusName(s));
 const isAdmin = () => state.user?.role === 'admin';
 

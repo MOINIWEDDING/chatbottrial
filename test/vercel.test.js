@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { configErrors } = require('../src/runtime');
+const { startPostgres } = require('./helpers');
 
 const ROOT = path.join(__dirname, '..');
 
@@ -35,27 +36,29 @@ function run(env) {
   });
 }
 
-test('Vercel: la función atiende la API, el login y el webhook', async () => {
-  const out = await run({ TURSO_DATABASE_URL: ':memory:', META_APP_SECRET: 's' });
+test('Vercel: la función atiende la API, el login y el webhook (con Postgres)', async (t) => {
+  const pg = await startPostgres();
+  t.after(() => pg.stop());
+  const out = await run({ DATABASE_URL: pg.url, META_APP_SECRET: 's' });
   assert.deepEqual(out.health, { status: 200, body: { ok: true } });
   assert.equal(out.login.status, 200, 'crea el admin con ADMIN_PASSWORD en el primer uso');
   assert.match(out.login.cookie, /HttpOnly/);
   assert.equal(out.verify, '42');
 });
 
-test('Vercel: sin base Turso responde un error claro en vez de perder datos', async () => {
+test('Vercel: sin DATABASE_URL responde un error claro en vez de perder datos', async () => {
   const out = await run({});
   assert.equal(out.health.status, 500);
-  assert.match(out.health.body.error, /TURSO_DATABASE_URL/);
+  assert.match(out.health.body.error, /DATABASE_URL/);
 });
 
 test('revisión de configuración', () => {
-  const base = { isVercel: false, isProduction: false, database: { url: 'file:x.db' }, meta: {} };
+  const base = { isVercel: false, isProduction: false, database: { url: 'data/pglite' }, meta: {} };
   assert.deepEqual(configErrors(base), []);
-  assert.match(configErrors({ ...base, isVercel: true }).join(), /TURSO_DATABASE_URL/);
+  assert.match(configErrors({ ...base, isVercel: true }).join(), /DATABASE_URL/);
   assert.match(configErrors({ ...base, isProduction: true }).join(), /META_APP_SECRET/);
   assert.deepEqual(configErrors({ ...base, isVercel: true, isProduction: true,
-    database: { url: 'libsql://x.turso.io' }, meta: { appSecret: 's' } }), []);
+    database: { url: 'postgresql://postgres.abc:pw@aws-0-sa-east-1.pooler.supabase.com:6543/postgres' }, meta: { appSecret: 's' } }), []);
 });
 
 // Reproduce lo que hace el runtime de Vercel ("helpers"): lee el cuerpo completo antes

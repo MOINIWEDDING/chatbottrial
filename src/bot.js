@@ -48,12 +48,12 @@ function describe(msg) {
 
 function createBot({ db, send, fetchProfile = async () => null, windowMinutes = 30, logger = console }) {
   const getConversation = (channel, contactId) => db.get(`
-    SELECT *, (julianday('now') - julianday(updated_at)) * 1440 AS age_minutes
+    SELECT *, (EXTRACT(EPOCH FROM now() - updated_at) / 60)::float8 AS age_minutes
     FROM conversations WHERE channel = ? AND contact_id = ?`, channel, contactId);
 
   const setConversation = (channel, contactId, state, ticketId = null) => db.run(`
     INSERT INTO conversations (channel, contact_id, state, ticket_id, updated_at)
-    VALUES (?, ?, ?, ?, datetime('now'))
+    VALUES (?, ?, ?, ?, now())
     ON CONFLICT(channel, contact_id) DO UPDATE SET state = excluded.state, ticket_id = excluded.ticket_id,
       updated_at = excluded.updated_at`, channel, contactId, state, ticketId);
 

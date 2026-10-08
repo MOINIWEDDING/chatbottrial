@@ -1,0 +1,32 @@
+{
+  "name": "denuncias-santiago",
+  "version": "1.0.0",
+  "description": "Chatbot de denuncias ciudadanas (WhatsApp, Instagram, Facebook) con panel web por departamento",
+  "main": "src/server.js",
+  "directories": {
+    "test": "test"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server.js",
+    "demo": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning scripts/demo.js",
+    "crear-usuario": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning scripts/crear-usuario.js",
+    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\""
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MOINIWEDDING/chatbottrial.git"
+  },
+  "license": "UNLICENSED",
+  "bugs": {
+    "url": "https://github.com/MOINIWEDDING/chatbottrial/issues"
+  },
+  "homepage": "https://github.com/MOINIWEDDING/chatbottrial#readme",
+  "dependencies": {
+    "express": "^5.2.1"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "private": true
+}

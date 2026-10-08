@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Denuncias Ciudadanas · Santiago</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <!-- Inicio de sesión -->
+  <section id="login-view" class="login" hidden>
+    <form id="login-form" class="card login-card">
+      <div class="brand brand-lg"><span class="brand-mark">S</span><div><strong>Denuncias Ciudadanas</strong><small>Municipalidad de Santiago</small></div></div>
+      <label>Usuario <input name="username" autocomplete="username" required></label>
+      <label>Contraseña <input name="password" type="password" autocomplete="current-password" required></label>
+      <p id="login-error" class="error" hidden></p>
+      <button class="btn primary" type="submit">Ingresar</button>
+    </form>
+  </section>
+
+  <!-- Aplicación -->
+  <div id="app-view" hidden>
+    <header class="topbar">
+      <div class="brand"><span class="brand-mark">S</span><div><strong>Denuncias Ciudadanas</strong><small>Municipalidad de Santiago</small></div></div>
+      <nav class="tabs" id="tabs">
+        <button data-tab="tickets" class="active">Denuncias</button>
+        <button data-tab="simulator" id="tab-simulator">Simulador</button>
+        <button data-tab="users" id="tab-users">Usuarios</button>
+      </nav>
+      <div class="user"><span id="user-name"></span><span id="user-team" class="chip"></span><button id="logout" class="btn ghost">Salir</button></div>
+    </header>
+
+    <main>
+      <!-- Denuncias -->
+      <section id="tickets-tab" class="tab">
+        <div class="heading">
+          <h1 id="tickets-title">Denuncias</h1>
+          <span class="muted" id="last-update"></span>
+        </div>
+
+        <div class="kpis" id="kpis"></div>
+
+        <div class="group" id="department-group">
+          <h2>Por departamento</h2>
+          <div class="chips" id="department-chips"></div>
+        </div>
+        <div class="group">
+          <h2>Por sector</h2>
+          <div class="chips" id="sector-chips"></div>
+        </div>
+
+        <form class="filters" id="filters">
+          <select name="department" id="f-department"><option value="">Todos los departamentos</option></select>
+          <select name="sector" id="f-sector"><option value="">Todos los sectores</option></select>
+          <select name="status" id="f-status"><option value="">Todos los estados</option></select>
+          <select name="channel" id="f-channel"><option value="">Todos los canales</option></select>
+          <input type="date" name="from" title="Desde">
+          <input type="date" name="to" title="Hasta">
+          <input type="search" name="q" placeholder="Buscar folio, texto o dirección">
+          <button type="button" class="btn ghost" id="clear-filters">Limpiar</button>
+          <a class="btn ghost" id="export-csv" href="/api/tickets.csv">Exportar CSV</a>
+        </form>
+
+        <div class="card table-card">
+          <table>
+            <thead><tr><th>Folio</th><th>Fecha</th><th>Canal</th><th>Departamento</th><th>Sector</th><th>Denuncia</th><th>Estado</th></tr></thead>
+            <tbody id="tickets-body"></tbody>
+          </table>
+          <p class="empty" id="tickets-empty" hidden>No hay denuncias con estos filtros.</p>
+          <div class="pager"><button class="btn ghost" id="prev">‹ Anterior</button><span id="page-info"></span><button class="btn ghost" id="next">Siguiente ›</button></div>
+        </div>
+      </section>
+
+      <!-- Simulador -->
+      <section id="simulator-tab" class="tab" hidden>
+        <div class="heading"><h1>Simulador de chat</h1></div>
+        <p class="muted">Pruebe el bot como si fuera un vecino escribiendo por WhatsApp, Instagram o Facebook. Las denuncias quedan registradas con el canal “Simulador”.</p>
+        <div class="card chat">
+          <div class="chat-log" id="chat-log"></div>
+          <form id="chat-form" class="chat-form">
+            <input name="text" placeholder="Ej: hay basura sin recoger en Cumming con Agustinas" autocomplete="off" required>
+            <button class="btn primary">Enviar</button>
+          </form>
+          <div class="chat-tools"><button class="btn ghost" id="chat-reset" type="button">Nuevo vecino</button><span class="muted" id="chat-contact"></span></div>
+        </div>
+      </section>
+
+      <!-- Usuarios -->
+      <section id="users-tab" class="tab" hidden>
+        <div class="heading"><h1>Usuarios y equipos</h1></div>
+        <div class="grid-2">
+          <div class="card">
+            <table>
+              <thead><tr><th>Nombre</th><th>Usuario</th><th>Equipo</th><th></th></tr></thead>
+              <tbody id="users-body"></tbody>
+            </table>
+          </div>
+          <form class="card form" id="user-form">
+            <h2>Nuevo usuario</h2>
+            <label>Nombre <input name="name" required></label>
+            <label>Usuario <input name="username" required></label>
+            <label>Contraseña <input name="password" type="password" minlength="8" required></label>
+            <label>Rol
+              <select name="role" id="user-role"><option value="agent">Equipo (sólo ve su departamento)</option><option value="admin">Administrador (ve todo)</option></select>
+            </label>
+            <label id="user-dept-label">Departamento <select name="department" id="user-dept"></select></label>
+            <p class="error" id="user-error" hidden></p>
+            <button class="btn primary">Crear usuario</button>
+          </form>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <!-- Detalle -->
+  <div class="drawer-backdrop" id="drawer-backdrop" hidden></div>
+  <aside class="drawer" id="drawer" hidden aria-label="Detalle de denuncia">
+    <header class="drawer-head">
+      <div><h2 id="d-folio"></h2><span class="muted" id="d-meta"></span></div>
+      <button class="btn ghost" id="drawer-close" aria-label="Cerrar">✕</button>
+    </header>
+    <div class="drawer-body">
+      <dl class="facts" id="d-facts"></dl>
+      <div class="actions card">
+        <label>Estado <select id="d-status"></select></label>
+        <label>Derivar a <select id="d-department"></select></label>
+        <label>Sector <select id="d-sector"></select></label>
+        <label class="wide">Dirección <input id="d-address"></label>
+        <label class="wide">Mensaje para el vecino (opcional, se envía con el cambio de estado) <input id="d-note" placeholder="Ej: La cuadrilla pasará mañana en la mañana"></label>
+        <label class="check wide"><input type="checkbox" id="d-notify" checked> Avisar al vecino si cambia el estado</label>
+        <button class="btn primary wide" id="d-save">Guardar cambios</button>
+      </div>
+      <h3>Conversación e historial</h3>
+      <div class="thread" id="d-thread"></div>
+      <form class="reply" id="d-reply">
+        <textarea name="body" rows="2" placeholder="Escriba un mensaje…" required></textarea>
+        <div class="reply-actions">
+          <button class="btn ghost" name="mode" value="note">Nota interna</button>
+          <button class="btn primary" name="mode" value="citizen">Enviar al vecino</button>
+        </div>
+      </form>
+    </div>
+  </aside>
+
+  <div class="toast" id="toast" hidden></div>
+  <script src="/app.js"></script>
+</body>
+</html>

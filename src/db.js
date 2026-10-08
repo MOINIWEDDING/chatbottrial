@@ -1,6 +1,8 @@
+// Base de datos libSQL (SQLite). En desarrollo usa un archivo local; en Vercel u otro
+// servidor sin disco permanente se conecta a una base Turso (TURSO_DATABASE_URL).
 const fs = require('node:fs');
 const path = require('node:path');
-const { DatabaseSync } = require('node:sqlite');
+const { createClient } = require('@libsql/client');
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS users (
@@ -66,25 +68,36 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 `;
 
-function openDatabase(file) {
-  if (file !== ':memory:') fs.mkdirSync(path.dirname(file), { recursive: true });
-  const db = new DatabaseSync(file);
-  db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON;');
-  db.exec(SCHEMA);
-  return db;
-}
+const toObject = (row) => (row ? { ...row } : undefined);
 
-/** Ejecuta fn dentro de una transacción. */
-function transaction(db, fn) {
-  db.exec('BEGIN');
-  try {
-    const result = fn();
-    db.exec('COMMIT');
-    return result;
-  } catch (err) {
-    db.exec('ROLLBACK');
-    throw err;
+/**
+ * Abre la base de datos y crea las tablas si no existen.
+ * url: "file:ruta.db", ":memory:" o "libsql://….turso.io" (con authToken).
+ */
+async function openDatabase({ url, authToken } = {}) {
+  if (url.startsWith('file:')) {
+    fs.mkdirSync(path.dirname(path.resolve(url.slice('file:'.length))), { recursive: true });
   }
+  const client = createClient({ url, authToken: authToken || undefined });
+  await client.executeMultiple(SCHEMA);
+  const exec = (sql, args) => client.execute({ sql, args });
+
+  return {
+    client,
+    /** Primera fila del resultado (o undefined). */
+    get: async (sql, ...args) => toObject((await exec(sql, args)).rows[0]),
+    /** Todas las filas del resultado. */
+    all: async (sql, ...args) => (await exec(sql, args)).rows.map(toObject),
+    /** Ejecuta una instrucción; devuelve { changes, lastInsertRowid }. */
+    run: async (sql, ...args) => {
+      const rs = await exec(sql, args);
+      return { changes: rs.rowsAffected, lastInsertRowid: rs.lastInsertRowid === undefined ? null : Number(rs.lastInsertRowid) };
+    },
+    /** Varias instrucciones en una transacción; recibe [[sql, ...args], …]. */
+    batch: async (statements) => (await client.batch(statements.map(([sql, ...args]) => ({ sql, args })), 'write'))
+      .map((rs) => ({ changes: rs.rowsAffected, lastInsertRowid: rs.lastInsertRowid === undefined ? null : Number(rs.lastInsertRowid) })),
+    close: () => client.close(),
+  };
 }
 
-module.exports = { openDatabase, transaction };
+module.exports = { openDatabase };

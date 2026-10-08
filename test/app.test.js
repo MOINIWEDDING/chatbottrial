@@ -9,7 +9,7 @@ const SECRET = 'app-secret';
 const silent = { info() {}, warn() {}, error() {} };
 
 async function setup() {
-  const db = openDatabase(':memory:');
+  const db = await openDatabase({ url: ':memory:' });
   const sent = [];
   const send = async (target, text) => { sent.push({ ...target, text }); return {}; };
   const config = {
@@ -19,9 +19,9 @@ async function setup() {
   const { app } = createApp({ db, send, config, logger: silent });
   const server = await new Promise((resolve) => { const s = app.listen(0, () => resolve(s)); });
   const base = `http://127.0.0.1:${server.address().port}`;
-  createUser(db, { username: 'admin', name: 'Admin', password: 'admin-pass', role: 'admin' });
-  createUser(db, { username: 'obras', name: 'Obras', password: 'obras-pass', department: 'obras' });
-  createUser(db, { username: 'aseo', name: 'Aseo', password: 'aseo-pass', department: 'aseo' });
+  await createUser(db, { username: 'admin', name: 'Admin', password: 'admin-pass', role: 'admin' });
+  await createUser(db, { username: 'obras', name: 'Obras', password: 'obras-pass', department: 'obras' });
+  await createUser(db, { username: 'aseo', name: 'Aseo', password: 'aseo-pass', department: 'aseo' });
   return { db, sent, server, base };
 }
 
@@ -74,7 +74,7 @@ test('rechaza webhooks con firma inválida', async (t) => {
   t.after(() => server.close());
   const res = await postWebhook(base, waText('w1', '569', 'bache en Lira'), 'falso');
   assert.equal(res.status, 401);
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM tickets').get().n, 0);
+  assert.equal((await db.get('SELECT COUNT(*) n FROM tickets')).n, 0);
 });
 
 test('flujo completo: WhatsApp → denuncia → panel del equipo correcto', async (t) => {
@@ -95,8 +95,8 @@ test('flujo completo: WhatsApp → denuncia → panel del equipo correcto', asyn
   await postWebhook(base, waText('w2', '56911111111', 'Calle Lira 450'));
   await waitFor(() => sent.length === 2);
   assert.match(sent[1].text, /San Borja/);
-  const ticket = db.prepare('SELECT * FROM tickets').get();
-  assert.equal(db.prepare('SELECT COUNT(*) n FROM tickets').get().n, 1);
+  const ticket = (await db.get('SELECT * FROM tickets'));
+  assert.equal((await db.get('SELECT COUNT(*) n FROM tickets')).n, 1);
   assert.equal(ticket.department, 'obras');
   assert.equal(ticket.sector, 'san-borja');
   assert.equal(ticket.address, 'Calle Lira 450');

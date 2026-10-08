@@ -47,15 +47,15 @@ function describe(msg) {
 }
 
 function createBot({ db, send, fetchProfile = async () => null, windowMinutes = 30, logger = console }) {
-  const getConversation = (channel, contactId) => db.prepare(`
+  const getConversation = (channel, contactId) => db.get(`
     SELECT *, (julianday('now') - julianday(updated_at)) * 1440 AS age_minutes
-    FROM conversations WHERE channel = ? AND contact_id = ?`).get(channel, contactId);
+    FROM conversations WHERE channel = ? AND contact_id = ?`, channel, contactId);
 
-  const setConversation = (channel, contactId, state, ticketId = null) => db.prepare(`
+  const setConversation = (channel, contactId, state, ticketId = null) => db.run(`
     INSERT INTO conversations (channel, contact_id, state, ticket_id, updated_at)
     VALUES (?, ?, ?, ?, datetime('now'))
     ON CONFLICT(channel, contact_id) DO UPDATE SET state = excluded.state, ticket_id = excluded.ticket_id,
-      updated_at = excluded.updated_at`).run(channel, contactId, state, ticketId);
+      updated_at = excluded.updated_at`, channel, contactId, state, ticketId);
 
   /** Envía un texto al vecino y lo registra en la denuncia. */
   async function reply(target, text, { ticketId = null, authorUserId = null } = {}) {
@@ -66,7 +66,7 @@ function createBot({ db, send, fetchProfile = async () => null, windowMinutes = 
       deliveryError = err.message;
       logger.error(`No se pudo enviar mensaje por ${target.channel} a ${target.contactId}: ${err.message}`);
     }
-    repo.addMessage(db, {
+    await repo.addMessage(db, {
       ticketId, channel: target.channel, contactId: target.contactId, direction: 'out', body: text,
       authorUserId, deliveryError,
     });
@@ -78,33 +78,35 @@ function createBot({ db, send, fetchProfile = async () => null, windowMinutes = 
    * había sido procesado (Meta reintenta webhooks).
    */
   async function handleIncoming(msg) {
-    if (repo.messageExists(db, msg.externalId)) return null;
     const { channel, contactId } = msg;
+    // Se guarda primero el mensaje: si ya existía, es un reintento de Meta y se ignora.
+    const inboundId = await repo.addMessage(db, {
+      channel, contactId, direction: 'in', externalId: msg.externalId, body: msg.text || null,
+      attachments: [...msg.attachments ?? [], ...(msg.location ? [{ type: 'location', ...msg.location }] : [])],
+    });
+    if (!inboundId) return null;
+    const attach = (ticketId) => repo.attachMessage(db, inboundId, ticketId);
+
     const target = { channel, contactId, replyTo: msg.replyTo };
     const text = describe(msg);
     const command = normalize(msg.text);
     const replies = [];
 
-    let conv = getConversation(channel, contactId);
+    let conv = await getConversation(channel, contactId);
     if (conv && conv.age_minutes > windowMinutes) conv = null;
-    let ticket = conv?.ticket_id ? repo.getTicket(db, conv.ticket_id) : null;
+    let ticket = conv?.ticket_id ? await repo.getTicket(db, conv.ticket_id) : null;
     if (ticket && ['resuelta', 'rechazada'].includes(ticket.status)) ticket = null;
 
-    const record = (ticketId) => repo.addMessage(db, {
-      ticketId, channel, contactId, direction: 'in', externalId: msg.externalId, body: msg.text || null,
-      attachments: [...msg.attachments ?? [], ...(msg.location ? [{ type: 'location', ...msg.location }] : [])],
-    });
-
     if (command === 'estado' || command === 'estado denuncia' || command === 'mis denuncias') {
-      record(ticket?.id);
-      replies.push(await reply(target, MESSAGES.status(repo.recentTicketsForContact(db, channel, contactId)), { ticketId: ticket?.id }));
-      if (conv) setConversation(channel, contactId, conv.state, conv.ticket_id);
+      await attach(ticket?.id);
+      const recent = await repo.recentTicketsForContact(db, channel, contactId);
+      replies.push(await reply(target, MESSAGES.status(recent), { ticketId: ticket?.id }));
+      if (conv) await setConversation(channel, contactId, conv.state, conv.ticket_id);
       return { replies, ticket };
     }
 
     if (command === 'nueva' || command === 'nueva denuncia' || command === 'otra denuncia') {
-      record(null);
-      setConversation(channel, contactId, 'awaiting_report');
+      await setConversation(channel, contactId, 'awaiting_report');
       replies.push(await reply(target, MESSAGES.newReport()));
       return { replies, ticket: null };
     }
@@ -113,28 +115,27 @@ function createBot({ db, send, fetchProfile = async () => null, windowMinutes = 
     if (!ticket) {
       const greeting = msg.postback || (msg.text && isGreeting(msg.text) && !msg.attachments?.length && !msg.location);
       if (!text || greeting) {
-        record(null);
-        setConversation(channel, contactId, 'awaiting_report');
+        await setConversation(channel, contactId, 'awaiting_report');
         replies.push(await reply(target, MESSAGES.welcome()));
         return { replies, ticket: null };
       }
       const sector = detectSector(`${text} ${msg.location?.address ?? ''}`);
-      ticket = repo.createTicket(db, {
+      ticket = await repo.createTicket(db, {
         channel, contactId, contactName: msg.contactName, replyTo: msg.replyTo,
         department: classifyDepartment(text), sector,
         address: msg.location?.address ?? null,
         latitude: msg.location?.latitude, longitude: msg.location?.longitude,
         description: text,
       });
-      record(ticket.id);
+      await attach(ticket.id);
       const askLocation = sector === UNKNOWN_SECTOR && !msg.location;
-      setConversation(channel, contactId, askLocation ? 'awaiting_location' : 'open', ticket.id);
+      await setConversation(channel, contactId, askLocation ? 'awaiting_location' : 'open', ticket.id);
       replies.push(await reply(target, MESSAGES.created(ticket, askLocation), { ticketId: ticket.id }));
       // Instagram y Messenger no incluyen el nombre en el webhook: se consulta el perfil
       // después de responder, para no demorar la respuesta al vecino.
       if (!ticket.contact_name) {
         const contactName = await fetchProfile({ channel, contactId }).catch(() => null);
-        if (contactName) ticket = repo.updateTicket(db, ticket.id, { contact_name: contactName });
+        if (contactName) ticket = await repo.updateTicket(db, ticket.id, { contact_name: contactName });
       }
       return { replies, ticket };
     }
@@ -143,14 +144,14 @@ function createBot({ db, send, fetchProfile = async () => null, windowMinutes = 
     if (conv.state === 'awaiting_location') {
       const addressText = msg.location?.address ?? msg.text ?? '';
       const sector = detectSector(addressText);
-      ticket = repo.updateTicket(db, ticket.id, {
+      ticket = await repo.updateTicket(db, ticket.id, {
         address: [ticket.address, addressText].filter(Boolean).join(' / ') || null,
         latitude: msg.location?.latitude ?? ticket.latitude,
         longitude: msg.location?.longitude ?? ticket.longitude,
         sector: sector !== UNKNOWN_SECTOR ? sector : ticket.sector,
       });
-      record(ticket.id);
-      setConversation(channel, contactId, 'open', ticket.id);
+      await attach(ticket.id);
+      await setConversation(channel, contactId, 'open', ticket.id);
       replies.push(await reply(target, MESSAGES.locationSaved(ticket), { ticketId: ticket.id }));
       return { replies, ticket };
     }
@@ -167,9 +168,9 @@ function createBot({ db, send, fetchProfile = async () => null, windowMinutes = 
       if (sector !== UNKNOWN_SECTOR) updates.sector = sector;
     }
     if (msg.location) Object.assign(updates, { latitude: msg.location.latitude, longitude: msg.location.longitude });
-    if (Object.keys(updates).length) ticket = repo.updateTicket(db, ticket.id, updates);
-    record(ticket.id);
-    setConversation(channel, contactId, 'open', ticket.id);
+    if (Object.keys(updates).length) ticket = await repo.updateTicket(db, ticket.id, updates);
+    await attach(ticket.id);
+    await setConversation(channel, contactId, 'open', ticket.id);
     replies.push(await reply(target, MESSAGES.appended(ticket), { ticketId: ticket.id }));
     return { replies, ticket };
   }

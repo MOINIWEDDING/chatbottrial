@@ -7,15 +7,6 @@ const { createBot } = require('../src/bot');
 const { DEPARTMENTS } = require('../src/catalog');
 
 const PASSWORD = 'demo1234';
-const db = openDatabase(config.dbPath);
-
-for (const d of DEPARTMENTS) {
-  if (db.prepare('SELECT 1 FROM users WHERE username = ?').get(d.id)) continue;
-  createUser(db, { username: d.id, password: PASSWORD, name: `Equipo ${d.name}`, role: 'agent', department: d.id });
-}
-if (!db.prepare("SELECT 1 FROM users WHERE username = 'admin'").get()) {
-  createUser(db, { username: 'admin', password: PASSWORD, name: 'Administrador', role: 'admin' });
-}
 
 const SAMPLES = [
   ['whatsapp', 'Hay basura sin recoger hace una semana en Cumming con Agustinas, barrio Yungay'],
@@ -32,6 +23,20 @@ const SAMPLES = [
 ];
 
 (async () => {
+  if (!config.database.url.startsWith('file:') && !process.argv.includes('--forzar')) {
+    console.error('La base configurada es remota (Turso). Los datos de demostración crean usuarios con la contraseña');
+    console.error(`"${PASSWORD}" y denuncias falsas. Si de verdad quiere cargarlos ahí: npm run demo -- --forzar`);
+    process.exit(1);
+  }
+  const db = await openDatabase(config.database);
+  for (const d of DEPARTMENTS) {
+    if (await db.get('SELECT 1 FROM users WHERE username = ?', d.id)) continue;
+    await createUser(db, { username: d.id, password: PASSWORD, name: `Equipo ${d.name}`, role: 'agent', department: d.id });
+  }
+  if (!await db.get("SELECT 1 FROM users WHERE username = 'admin'")) {
+    await createUser(db, { username: 'admin', password: PASSWORD, name: 'Administrador', role: 'admin' });
+  }
+
   const bot = createBot({ db, send: async () => ({}), logger: { error() {}, info() {} } });
   let i = 0;
   for (const [channel, text] of SAMPLES) {
@@ -43,4 +48,8 @@ const SAMPLES = [
   }
   console.log(`Datos de demostración cargados (${SAMPLES.length} denuncias).`);
   console.log(`Usuarios: admin y ${DEPARTMENTS.map((d) => d.id).join(', ')} — contraseña: ${PASSWORD}`);
-})();
+  console.log('(Si el usuario admin ya existía, conserva su contraseña.)');
+})().catch((err) => {
+  console.error(err.message);
+  process.exit(1);
+});

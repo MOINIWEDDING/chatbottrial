@@ -32,7 +32,7 @@ Vecino (WhatsApp / Instagram / Facebook)
 
 ## Instalar y probar (5 minutos)
 
-Requiere **Node.js 22.13 o superior**. No necesita una base de datos externa: usa el SQLite que viene incluido en Node.
+Requiere **Node.js 22**. Para probar en su computador no necesita una base de datos externa: los datos quedan en el archivo `data/denuncias.db`. En Vercel se usa una base Turso (vea [Publicar en Vercel](#publicar-en-vercel)).
 
 ```bash
 npm install
@@ -51,11 +51,38 @@ npm run crear-usuario -- jperez ClaveSegura123 obras "Juan Pérez"
 npm run crear-usuario -- mgonzalez OtraClave456 admin "María González"
 ```
 
+## Publicar en Vercel
+
+El repositorio ya viene preparado para Vercel (`vercel.json` y `api/index.js`): el panel se sirve como sitio estático y la API y el webhook corren como una función.
+
+**¿Por qué hace falta Turso?** En Vercel el disco es temporal: un archivo de base de datos se borraría en cada despliegue o reinicio, y con él las denuncias. Por eso en Vercel los datos se guardan en **Turso**, una base de datos SQLite en la nube que tiene un plan gratuito y se conecta desde el mismo panel de Vercel. Si falta, el sistema no arranca y muestra el mensaje *"Falta TURSO_DATABASE_URL"*, en vez de perder datos sin avisar.
+
+1. **Importe el proyecto.** En <https://vercel.com/new>, elija *Import Git Repository* y seleccione `moiniwedding/chatbottrial`. No cambie nada de la configuración de compilación (el *Framework Preset* queda en *Other*).
+   - Vercel publica en producción la rama principal (`main`). Si el código todavía está en otra rama, únala a `main` (merge del pull request) o cambie la rama de producción en *Settings → Environments → Production*.
+2. **Cree la base de datos.** En el proyecto: *Storage → Create Database → Turso → Continue*. Elija la región **AWS us-east-1** (la misma de las funciones de Vercel por defecto) y conéctela al proyecto. Luego revise en *Settings → Environment Variables* que hayan quedado la URL y el token de la base. El sistema reconoce `TURSO_DATABASE_URL` / `TURSO_AUTH_TOKEN` (y también `TURSO_URL`, `LIBSQL_URL` o `DATABASE_URL` con una dirección `libsql://`). Si la integración usó otros nombres, o les agregó un prefijo, cree a mano `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN` con esos mismos valores.
+   - Si prefiere crearla directamente en <https://turso.tech>: `turso db create denuncias`, `turso db show denuncias --url` y `turso db tokens create denuncias`. Luego agregue esos dos valores como variables en Vercel.
+3. **Agregue las variables de entorno** en *Settings → Environment Variables* (ambiente *Production*):
+
+   | Variable | Valor |
+   |---|---|
+   | `ADMIN_PASSWORD` | Contraseña del usuario `admin` (se crea la primera vez que alguien entra) |
+   | `META_VERIFY_TOKEN` | Un texto que usted invente, el mismo que pondrá en Meta |
+   | `META_APP_SECRET` | Clave secreta de la app de Meta (obligatoria en producción) |
+   | `WHATSAPP_TOKEN`, `FB_PAGE_ACCESS_TOKEN` | Tokens de WhatsApp y de la página de Facebook |
+   | `INSTAGRAM_ACCESS_TOKEN`, `INSTAGRAM_APP_SECRET` | Para Instagram (vea más abajo) |
+   | `ENABLE_SIMULATOR` | `false` cuando ya esté en uso real |
+
+4. **Despliegue** (*Deployments → Redeploy*, o haga un push a `main`). Abra `https://SU-PROYECTO.vercel.app` y entre como `admin` con la contraseña de `ADMIN_PASSWORD`.
+5. **Configure Meta** con la URL del webhook `https://SU-PROYECTO.vercel.app/webhook`. Use siempre el dominio de **producción**: las URL de vista previa de Vercel están protegidas con inicio de sesión y Meta no puede llegar a ellas.
+6. **Cree los usuarios de cada equipo** en la pestaña *Usuarios*. También puede hacerlo desde su computador: ponga `TURSO_DATABASE_URL` y `TURSO_AUTH_TOKEN` en su `.env` y use `npm run crear-usuario` o `npm run instagram`; esos comandos trabajan directo sobre la base de producción.
+
+Al cambiar una variable de entorno en Vercel, hay que volver a desplegar para que tome efecto.
+
 ## Conectar WhatsApp, Instagram y Facebook
 
 Los tres canales pasan por **Meta for Developers**, con una sola app y un solo webhook.
 
-1. **Publique el servidor con HTTPS.** Meta sólo envía webhooks a direcciones `https://`. Puede ser un servidor municipal detrás de un proxy con certificado, o un servicio como Render, Railway o Fly.io. Para pruebas puede usar `ngrok http 3000`.
+1. **Publique el servidor con HTTPS.** Meta sólo envía webhooks a direcciones `https://`. Lo más simple es [Vercel](#publicar-en-vercel). También sirve un servidor municipal detrás de un proxy con certificado (`npm start`). Para pruebas locales puede usar `ngrok http 3000`.
 2. Copie `.env.example` como `.env` y complete `PUBLIC_URL`, `ADMIN_PASSWORD` y `META_VERIFY_TOKEN` (un texto que usted invente).
 3. En <https://developers.facebook.com>, cree una app de tipo **Negocios** vinculada al Business Manager de la Municipalidad. Copie la **clave secreta de la app** (Configuración → Básica) en `META_APP_SECRET`.
 4. **WhatsApp**: agregue el producto *WhatsApp*, registre el número municipal y cree un token permanente (usuario del sistema del Business Manager con el permiso `whatsapp_business_messaging`). Póngalo en `WHATSAPP_TOKEN`. En *Configuración → Webhook*, ingrese `https://SU-DOMINIO/webhook` y el `META_VERIFY_TOKEN`, y suscríbase al campo **messages**.
@@ -112,15 +139,19 @@ Al iniciar, el servidor muestra en la consola si Instagram quedó configurado.
 ## Estructura
 
 ```
+api/index.js     función de Vercel (usa src/runtime.js)
+vercel.json      configuración de Vercel: sitio estático + función para /api, /webhook y /health
 src/
-  server.js      punto de entrada
+  server.js      punto de entrada para un servidor propio (npm start)
+  runtime.js     arma la aplicación: revisa la configuración, abre la base y crea el admin
   app.js         API REST, webhook, sesiones y permisos por equipo
   bot.js         flujo de conversación y respuestas
   classifier.js  clasificación por departamento y detección de sector
   catalog.js     departamentos, palabras clave, sectores, estados
   meta.js        lectura de webhooks y envío por WhatsApp / Messenger / Instagram
   tickets.js     acceso a datos
-  db.js, auth.js
+  db.js          base de datos libSQL: archivo local o Turso
+  auth.js        usuarios, contraseñas y sesiones
 public/          panel web (HTML/CSS/JS sin dependencias)
 scripts/         demo, creación de usuarios y configuración de Instagram
 test/            pruebas (npm test)

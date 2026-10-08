@@ -3,16 +3,13 @@
   "version": "1.0.0",
   "description": "Chatbot de denuncias ciudadanas (WhatsApp, Instagram, Facebook) con panel web por departamento",
   "main": "src/server.js",
-  "directories": {
-    "test": "test"
-  },
   "scripts": {
-    "start": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server.js",
-    "dev": "node --watch --env-file-if-exists=.env --disable-warning=ExperimentalWarning src/server.js",
-    "demo": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning scripts/demo.js",
-    "crear-usuario": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning scripts/crear-usuario.js",
-    "test": "node --disable-warning=ExperimentalWarning --test \"test/**/*.test.js\"",
-    "instagram": "node --env-file-if-exists=.env --disable-warning=ExperimentalWarning scripts/instagram.js"
+    "start": "node --env-file-if-exists=.env src/server.js",
+    "dev": "node --watch --env-file-if-exists=.env src/server.js",
+    "demo": "node --env-file-if-exists=.env scripts/demo.js",
+    "crear-usuario": "node --env-file-if-exists=.env scripts/crear-usuario.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "instagram": "node --env-file-if-exists=.env scripts/instagram.js"
   },
   "repository": {
     "type": "git",
@@ -24,10 +21,11 @@
   },
   "homepage": "https://github.com/MOINIWEDDING/chatbottrial#readme",
   "dependencies": {
+    "@libsql/client": "^0.18.0",
     "express": "^5.2.1"
   },
   "engines": {
-    "node": ">=22.13"
+    "node": "22.x"
   },
   "private": true
 }

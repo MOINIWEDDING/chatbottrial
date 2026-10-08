@@ -7,14 +7,33 @@ const auth = require('./auth');
 const { verifySignature, parseWebhook } = require('./meta');
 const { createBot } = require('./bot');
 
+const MAX_WEBHOOK_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Lee el cuerpo crudo de la solicitud (necesario para verificar la firma de Meta).
+ * No se usa express.json() aquí porque en Vercel el cuerpo llega ya leído y
+ * body-parser lo omite; Vercel sí permite volver a leerlo con los eventos data/end.
+ */
+function readRawBody(req) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    let size = 0;
+    req.on('data', (chunk) => {
+      size += chunk.length;
+      if (size > MAX_WEBHOOK_BYTES) reject(Object.assign(new Error('Cuerpo demasiado grande'), { status: 413 }));
+      else chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
+  });
+}
+
 function createApp({ db, send, fetchProfile, config, logger = console }) {
   const app = express();
   const bot = createBot({ db, send, fetchProfile, windowMinutes: config.conversationWindowMinutes, logger });
-  const secure = config.publicUrl.startsWith('https://');
 
   app.disable('x-powered-by');
   app.set('trust proxy', 1);
-  app.use(express.json({ limit: '2mb', verify: (req, _res, buf) => { req.rawBody = buf; } }));
   app.use((_req, res, next) => {
     res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'DENY', 'Referrer-Policy': 'same-origin' });
     next();
@@ -28,37 +47,49 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
     res.type('text/plain').send(String(req.query['hub.challenge'] ?? ''));
   });
 
+  // Va antes de express.json(): necesita el cuerpo crudo para verificar la firma.
   app.post('/webhook', async (req, res) => {
-    if (!verifySignature(req.rawBody, req.get('x-hub-signature-256'), [config.meta.appSecret, config.meta.instagramAppSecret])) {
+    const raw = await readRawBody(req);
+    if (!verifySignature(raw, req.get('x-hub-signature-256'), [config.meta.appSecret, config.meta.instagramAppSecret])) {
       logger.warn('Webhook rechazado: firma inválida');
       return res.sendStatus(401);
     }
-    // Meta exige responder rápido; los mensajes se procesan después de contestar 200.
-    res.sendStatus(200);
-    for (const msg of parseWebhook(req.body)) {
+    let body;
+    try {
+      body = JSON.parse(raw.toString('utf8'));
+    } catch {
+      return res.sendStatus(400);
+    }
+    // Se procesa antes de responder: en Vercel (serverless) la función se detiene al
+    // enviar la respuesta. Responder 200 aunque falle un mensaje evita que Meta
+    // reintente en bucle; los reintentos legítimos se descartan por external_id.
+    for (const msg of parseWebhook(body)) {
       try {
         await bot.handleIncoming(msg);
       } catch (err) {
         logger.error('Error procesando mensaje entrante', err);
       }
     }
+    res.sendStatus(200);
   });
+
+  app.use(express.json({ limit: '1mb' }));
 
   // ---------------------------------------------------------------- Autenticación
   const loginAttempts = new Map();
-  app.use('/api', (req, _res, next) => {
-    req.user = auth.sessionUser(db, auth.parseCookies(req.headers.cookie)[auth.COOKIE]);
+  app.use('/api', async (req, _res, next) => {
+    req.user = await auth.sessionUser(db, auth.parseCookies(req.headers.cookie)[auth.COOKIE]);
     next();
   });
   const requireUser = (req, res, next) => (req.user ? next() : res.status(401).json({ error: 'Debe iniciar sesión' }));
   const requireAdmin = (req, res, next) => (req.user?.role === 'admin' ? next() : res.status(403).json({ error: 'Sólo administradores' }));
 
-  app.post('/api/login', (req, res) => {
+  app.post('/api/login', async (req, res) => {
     const key = req.ip;
     const attempts = loginAttempts.get(key) ?? { n: 0, until: 0 };
     if (attempts.until > Date.now()) return res.status(429).json({ error: 'Demasiados intentos. Espere unos minutos.' });
     const { username = '', password = '' } = req.body ?? {};
-    const row = db.prepare('SELECT * FROM users WHERE username = ?').get(String(username).trim().toLowerCase());
+    const row = await db.get('SELECT * FROM users WHERE username = ?', String(username).trim().toLowerCase());
     if (!row || !auth.verifyPassword(password, row.password_hash)) {
       attempts.n += 1;
       if (attempts.n >= 5) Object.assign(attempts, { n: 0, until: Date.now() + 5 * 60_000 });
@@ -66,16 +97,16 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
       return res.status(401).json({ error: 'Usuario o contraseña incorrectos' });
     }
     loginAttempts.delete(key);
-    const token = auth.createSession(db, row.id, config.sessionDays);
+    const token = await auth.createSession(db, row.id, config.sessionDays);
     res.cookie(auth.COOKIE, token, {
-      httpOnly: true, sameSite: 'strict', secure, maxAge: config.sessionDays * 86_400_000, path: '/',
+      httpOnly: true, sameSite: 'strict', secure: req.secure, maxAge: config.sessionDays * 86_400_000, path: '/',
     });
     res.json({ user: auth.publicUser(row) });
   });
 
-  app.post('/api/logout', (req, res) => {
+  app.post('/api/logout', async (req, res) => {
     const token = auth.parseCookies(req.headers.cookie)[auth.COOKIE];
-    if (token) db.prepare('DELETE FROM sessions WHERE token = ?').run(token);
+    if (token) await db.run('DELETE FROM sessions WHERE token = ?', token);
     res.clearCookie(auth.COOKIE, { path: '/' }).json({ ok: true });
   });
 
@@ -100,8 +131,8 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
     return filters;
   };
 
-  const loadTicket = (req, res, next) => {
-    const ticket = repo.getTicket(db, Number(req.params.id));
+  const loadTicket = async (req, res, next) => {
+    const ticket = await repo.getTicket(db, Number(req.params.id));
     if (!ticket || (req.user.role !== 'admin' && ticket.department !== req.user.department)) {
       return res.status(404).json({ error: 'Denuncia no encontrada' });
     }
@@ -109,20 +140,20 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
     next();
   };
 
-  app.get('/api/tickets', requireUser, (req, res) => {
+  app.get('/api/tickets', requireUser, async (req, res) => {
     const limit = Math.min(Number(req.query.limit) || 50, 200);
     const offset = Math.max(Number(req.query.offset) || 0, 0);
-    res.json(repo.listTickets(db, scopedFilters(req.user, req.query), { limit, offset }));
+    res.json(await repo.listTickets(db, scopedFilters(req.user, req.query), { limit, offset }));
   });
 
-  app.get('/api/stats', requireUser, (req, res) => {
+  app.get('/api/stats', requireUser, async (req, res) => {
     const filters = scopedFilters(req.user, req.query);
     delete filters.status;
-    res.json(repo.stats(db, filters));
+    res.json(await repo.stats(db, filters));
   });
 
-  app.get('/api/tickets/:id', requireUser, loadTicket, (req, res) => {
-    res.json({ ticket: req.ticket, messages: repo.listMessages(db, req.ticket.id) });
+  app.get('/api/tickets/:id', requireUser, loadTicket, async (req, res) => {
+    res.json({ ticket: req.ticket, messages: await repo.listMessages(db, req.ticket.id) });
   });
 
   app.patch('/api/tickets/:id', requireUser, loadTicket, async (req, res) => {
@@ -150,8 +181,8 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
     }
     if (!log.length) return res.json({ ticket: req.ticket });
 
-    const ticket = repo.updateTicket(db, req.ticket.id, changes);
-    repo.addMessage(db, {
+    const ticket = await repo.updateTicket(db, req.ticket.id, changes);
+    await repo.addMessage(db, {
       ticketId: ticket.id, channel: ticket.channel, contactId: ticket.contact_id, direction: 'system',
       body: log.join(' · '), authorUserId: req.user.id,
     });
@@ -170,15 +201,15 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
       const result = await bot.notifyCitizen(req.ticket, { note: body, authorUserId: req.user.id, statusChanged: false });
       return res.json({ ok: !result.deliveryError, deliveryError: result.deliveryError });
     }
-    repo.addMessage(db, {
+    await repo.addMessage(db, {
       ticketId: req.ticket.id, channel: req.ticket.channel, contactId: req.ticket.contact_id,
       direction: 'note', body, authorUserId: req.user.id,
     });
     res.json({ ok: true });
   });
 
-  app.get('/api/tickets.csv', requireUser, (req, res) => {
-    const { items } = repo.listTickets(db, scopedFilters(req.user, req.query), { limit: 100_000 });
+  app.get('/api/tickets.csv', requireUser, async (req, res) => {
+    const { items } = await repo.listTickets(db, scopedFilters(req.user, req.query), { limit: 100_000 });
     const cell = (v) => {
       let s = String(v ?? '');
       if (/^[=+\-@]/.test(s)) s = `'${s}`; // evita inyección de fórmulas en Excel
@@ -193,35 +224,38 @@ function createApp({ db, send, fetchProfile, config, logger = console }) {
   });
 
   // ---------------------------------------------------------------- Usuarios (admin)
-  app.get('/api/users', requireUser, requireAdmin, (_req, res) => {
-    res.json(db.prepare('SELECT * FROM users ORDER BY role, department, name').all().map(auth.publicUser));
+  app.get('/api/users', requireUser, requireAdmin, async (_req, res) => {
+    res.json((await db.all('SELECT * FROM users ORDER BY role, department, name')).map(auth.publicUser));
   });
 
-  app.post('/api/users', requireUser, requireAdmin, (req, res) => {
+  app.post('/api/users', requireUser, requireAdmin, async (req, res) => {
     const { username, name, password, role = 'agent', department } = req.body ?? {};
     if (!username || !name || !password) return res.status(400).json({ error: 'Faltan datos' });
     if (String(password).length < 8) return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
     if (!['admin', 'agent'].includes(role)) return res.status(400).json({ error: 'Rol inválido' });
     if (role === 'agent' && !catalog.findDepartment(department)) return res.status(400).json({ error: 'Departamento inválido' });
     try {
-      res.status(201).json(auth.createUser(db, { username, name, password, role, department }));
+      res.status(201).json(await auth.createUser(db, { username, name, password, role, department }));
     } catch (err) {
       res.status(409).json({ error: /UNIQUE/.test(err.message) ? 'El usuario ya existe' : err.message });
     }
   });
 
-  app.patch('/api/users/:id/password', requireUser, requireAdmin, (req, res) => {
+  app.patch('/api/users/:id/password', requireUser, requireAdmin, async (req, res) => {
     const password = String(req.body?.password ?? '');
     if (password.length < 8) return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
-    const r = db.prepare('UPDATE users SET password_hash = ? WHERE id = ?').run(auth.hashPassword(password), Number(req.params.id));
+    const id = Number(req.params.id);
+    const [r] = await db.batch([
+      ['UPDATE users SET password_hash = ? WHERE id = ?', auth.hashPassword(password), id],
+      ['DELETE FROM sessions WHERE user_id = ?', id],
+    ]);
     if (!r.changes) return res.status(404).json({ error: 'Usuario no encontrado' });
-    db.prepare('DELETE FROM sessions WHERE user_id = ?').run(Number(req.params.id));
     res.json({ ok: true });
   });
 
-  app.delete('/api/users/:id', requireUser, requireAdmin, (req, res) => {
+  app.delete('/api/users/:id', requireUser, requireAdmin, async (req, res) => {
     if (Number(req.params.id) === req.user.id) return res.status(400).json({ error: 'No puede eliminar su propio usuario' });
-    db.prepare('DELETE FROM users WHERE id = ?').run(Number(req.params.id));
+    await auth.deleteUser(db, Number(req.params.id));
     res.json({ ok: true });
   });
 

@@ -84,7 +84,7 @@ test('acepta firmas hechas con la clave de la app de Meta o la de Instagram', ()
 });
 
 test('flujo Instagram: MD → respuesta automática → denuncia en el panel del equipo', async (t) => {
-  const db = openDatabase(':memory:');
+  const db = await openDatabase({ url: ':memory:' });
   const sent = [];
   const send = async (target, text) => { sent.push({ ...target, text }); };
   const fetchProfile = async ({ channel }) => (channel === 'instagram' ? 'Ana Pérez (@anaperez)' : null);
@@ -96,7 +96,7 @@ test('flujo Instagram: MD → respuesta automática → denuncia en el panel del
   const server = await new Promise((r) => { const s = app.listen(0, () => r(s)); });
   t.after(() => server.close());
   const base = `http://127.0.0.1:${server.address().port}`;
-  createUser(db, { username: 'parques', name: 'Parques', password: 'parques-pass', department: 'parques' });
+  await createUser(db, { username: 'parques', name: 'Parques', password: 'parques-pass', department: 'parques' });
 
   const post = (payload) => {
     const raw = JSON.stringify(payload);

@@ -1,4 +1,5 @@
 // Uso: npm run crear-usuario -- <usuario> <contraseña> <departamento|admin> "Nombre Apellido"
+// Crea el usuario en la base configurada en .env (local, o Turso si TURSO_DATABASE_URL está definido).
 const config = require('../src/config');
 const { openDatabase } = require('../src/db');
 const { createUser } = require('../src/auth');
@@ -14,9 +15,15 @@ if (team !== 'admin' && !DEPARTMENTS.some((d) => d.id === team)) {
   console.error(`Departamento desconocido: ${team}`);
   process.exit(1);
 }
-const db = openDatabase(config.dbPath);
-const user = createUser(db, {
-  username, password, name: nameParts.join(' ') || username,
-  role: team === 'admin' ? 'admin' : 'agent', department: team === 'admin' ? null : team,
+
+(async () => {
+  const db = await openDatabase(config.database);
+  const user = await createUser(db, {
+    username, password, name: nameParts.join(' ') || username,
+    role: team === 'admin' ? 'admin' : 'agent', department: team === 'admin' ? null : team,
+  });
+  console.log('Usuario creado:', user);
+})().catch((err) => {
+  console.error(/UNIQUE/.test(err.message) ? `El usuario "${username}" ya existe` : err.message);
+  process.exit(1);
 });
-console.log('Usuario creado:', user);
